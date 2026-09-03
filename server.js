@@ -3,10 +3,6 @@ const cors = require("cors");
 
 const app = express();
 
-// ===============================
-// BASIC CONFIG
-// ===============================
-
 const PORT = process.env.PORT || 10000;
 const OPENVOICE_URL = process.env.OPENVOICE_URL;
 
@@ -27,16 +23,20 @@ app.use(express.urlencoded({
 }));
 
 // ===============================
-// HEALTH CHECK
+// ROOT
 // ===============================
 
 app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "AI Voice Clone API is running",
-    openvoiceConfigured: !!OPENVOICE_URL
+    openvoiceConfigured: Boolean(OPENVOICE_URL)
   });
 });
+
+// ===============================
+// HEALTH
+// ===============================
 
 app.get("/health", (req, res) => {
   res.json({
@@ -46,10 +46,10 @@ app.get("/health", (req, res) => {
 });
 
 // ===============================
-// OPENVOICE CONFIG CHECK
+// OPENVOICE STATUS
 // ===============================
 
-app.get("/api/openvoice-status", (req, res) => {
+app.get("/api/openvoice-status", async (req, res) => {
   if (!OPENVOICE_URL) {
     return res.status(500).json({
       success: false,
@@ -58,10 +58,51 @@ app.get("/api/openvoice-status", (req, res) => {
     });
   }
 
-  res.json({
-    success: true,
-    connected: true,
-    message: "OPENVOICE_URL is configured."
+  try {
+    const url = `${OPENVOICE_URL.replace(/\/$/, "")}/health`;
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return res.status(502).json({
+        success: false,
+        connected: false,
+        message: "OpenVoice server is not responding correctly."
+      });
+    }
+
+    return res.json({
+      success: true,
+      connected: true,
+      message: "OpenVoice server is reachable."
+    });
+
+  } catch (error) {
+    return res.status(502).json({
+      success: false,
+      connected: false,
+      message: "Could not connect to OpenVoice server.",
+      error: error.message
+    });
+  }
+});
+
+// ===============================
+// CLONE VOICE
+// ===============================
+
+app.post("/api/clone", async (req, res) => {
+  if (!OPENVOICE_URL) {
+    return res.status(500).json({
+      success: false,
+      message: "OPENVOICE_URL is missing on Render."
+    });
+  }
+
+  return res.status(501).json({
+    success: false,
+    message:
+      "The /api/clone endpoint is available, but the OpenVoice cloning service has not been connected yet."
   });
 });
 
@@ -73,7 +114,6 @@ app.post("/api/generate", async (req, res) => {
   try {
     const { text, voiceId, speed } = req.body;
 
-    // Check OpenVoice configuration
     if (!OPENVOICE_URL) {
       return res.status(500).json({
         success: false,
@@ -81,7 +121,6 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    // Check text
     if (!text || !text.trim()) {
       return res.status(400).json({
         success: false,
@@ -89,7 +128,6 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    // Check cloned voice
     if (!voiceId) {
       return res.status(400).json({
         success: false,
@@ -97,55 +135,46 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    console.log("Generating OpenVoice speech...");
+    const openVoiceUrl =
+      `${OPENVOICE_URL.replace(/\/$/, "")}/generate`;
+
+    console.log("Sending generation request to OpenVoice...");
     console.log("Voice ID:", voiceId);
-    console.log("Text length:", text.trim().length);
 
-    const response = await fetch(
-      `${OPENVOICE_URL.replace(/\/$/, "")}/generate`,
-      {
-        method: "POST",
+    const response = await fetch(openVoiceUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        text: text.trim(),
+        voice_id: voiceId,
+        speed: Number(speed) || 1
+      })
+    });
 
-        headers: {
-          "Content-Type": "application/json"
-        },
-
-        body: JSON.stringify({
-          text: text.trim(),
-          voice_id: voiceId,
-          speed: Number(speed) || 1
-        })
-      }
-    );
-
-    console.log(
-      "OpenVoice response status:",
-      response.status
-    );
-
-    // OpenVoice returned an error
     if (!response.ok) {
       const errorText = await response.text();
 
       console.error(
-        "OPENVOICE ERROR:",
+        "OpenVoice error:",
         response.status,
         errorText
       );
 
-      return res.status(response.status).json({
+      return res.status(502).json({
         success: false,
-        message: `OpenVoice error: ${errorText}`
+        message: "OpenVoice generation failed.",
+        error: errorText
       });
     }
 
-    // Get generated audio
     const audioBuffer = Buffer.from(
       await response.arrayBuffer()
     );
 
     if (!audioBuffer.length) {
-      return res.status(500).json({
+      return res.status(502).json({
         success: false,
         message: "OpenVoice returned empty audio."
       });
@@ -157,7 +186,6 @@ app.post("/api/generate", async (req, res) => {
       "bytes"
     );
 
-    // Return MP3 to frontend
     res.set({
       "Content-Type": "audio/mpeg",
       "Content-Length": audioBuffer.length,
@@ -170,7 +198,7 @@ app.post("/api/generate", async (req, res) => {
 
   } catch (error) {
     console.error(
-      "GENERATE SERVER ERROR:",
+      "GENERATION ERROR:",
       error
     );
 
@@ -184,13 +212,15 @@ app.post("/api/generate", async (req, res) => {
 });
 
 // ===============================
-// 404 HANDLER
+// 404
 // ===============================
 
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: "Endpoint not found."
+    message: "Endpoint not found.",
+    path: req.originalUrl,
+    method: req.method
   });
 });
 
@@ -208,7 +238,7 @@ app.use((error, req, res, next) => {
 });
 
 // ===============================
-// START SERVER
+// START
 // ===============================
 
 app.listen(PORT, "0.0.0.0", () => {
@@ -217,9 +247,7 @@ app.listen(PORT, "0.0.0.0", () => {
   );
 
   if (OPENVOICE_URL) {
-    console.log(
-      "OpenVoice URL configured."
-    );
+    console.log("OpenVoice URL configured.");
   } else {
     console.log(
       "WARNING: OPENVOICE_URL is not configured."
