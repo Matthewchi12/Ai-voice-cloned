@@ -1,104 +1,81 @@
 app.post("/api/generate", async (req, res) => {
   try {
     const { text, voiceId, speed } = req.body;
-    if (!process.env.FISH_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        message: "FISH_API_KEY is missing on Render."
-      });
-    }
+
     if (!text || !text.trim()) {
       return res.status(400).json({
         success: false,
         message: "Please enter some text."
       });
     }
+
     if (!voiceId) {
       return res.status(400).json({
         success: false,
         message: "Please create a voice clone first."
       });
     }
-    console.log("Generating speech...");
+
+    console.log("Generating OpenVoice speech...");
     console.log("Voice ID:", voiceId);
+
     const response = await fetch(
-      "https://api.fish.audio/v1/tts",
+      `${process.env.OPENVOICE_URL}/generate`,
       {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${process.env.FISH_API_KEY}`,
-          "Content-Type": "application/json",
-          /*
-           * Fish Audio model
-           */
-          "model": "s2.1-pro-free"
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           text: text.trim(),
-          reference_id: voiceId,
-          format: "mp3",
-          /*
-           * Optional speed
-           */
-          prosody: {
-            speed: Number(speed) || 1
-          }
+          voice_id: voiceId,
+          speed: Number(speed) || 1
         })
       }
     );
-    console.log(
-      "Fish Audio status:",
-      response.status
-    );
+
     if (!response.ok) {
-      const errorText =
-        await response.text();
+      const errorText = await response.text();
+
       console.error(
-        "FISH AUDIO ERROR:",
+        "OPENVOICE ERROR:",
         response.status,
         errorText
       );
+
       return res.status(response.status).json({
         success: false,
-        message:
-          `Fish Audio error ${response.status}: ${errorText}`
+        message: `OpenVoice error: ${errorText}`
       });
     }
-    const audioBuffer =
-      Buffer.from(
-        await response.arrayBuffer()
-      );
+
+    const audioBuffer = Buffer.from(
+      await response.arrayBuffer()
+    );
+
     if (!audioBuffer.length) {
       return res.status(500).json({
         success: false,
-        message:
-          "Fish Audio returned an empty audio file."
+        message: "OpenVoice returned empty audio."
       });
     }
-    console.log(
-      "Audio generated:",
-      audioBuffer.length,
-      "bytes"
-    );
+
     res.set({
       "Content-Type": "audio/mpeg",
       "Content-Length": audioBuffer.length,
       "Content-Disposition":
-        'inline; filename="voice-clone.mp3"',
-      "Cache-Control":
-        "no-store"
+        'attachment; filename="voice-clone.mp3"',
+      "Cache-Control": "no-store"
     });
+
     res.send(audioBuffer);
+
   } catch (error) {
-    console.error(
-      "SERVER ERROR:",
-      error
-    );
+    console.error("SERVER ERROR:", error);
+
     return res.status(500).json({
       success: false,
-      message:
-        error.message ||
-        "Internal server error."
+      message: error.message || "Internal server error."
     });
   }
 });
